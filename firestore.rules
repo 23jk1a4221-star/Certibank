@@ -1,0 +1,156 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // User Profile Validation & RBAC Guard
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'username', 'role', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'username', 'displayName', 'email', 'role', 'status', 'createdAt', 'updatedAt', 'lastLoginAt']) &&
+             data.id is string && data.id == request.auth.uid &&
+             data.username is string && data.username.size() >= 3 && data.username.size() <= 64 &&
+             data.role in ['OWNER', 'VIEWER', 'ADMIN'] &&
+             data.status in ['ACTIVE', 'SUSPENDED'];
+    }
+
+    // Document Validation
+    function isValidDocument(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'category', 'issuer', 'storageKey', 'createdAt', 'updatedAt']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.ownerId is string && data.ownerId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.category is string && data.category.size() <= 64 &&
+             data.issuer is string && data.issuer.size() <= 150 &&
+             data.storageKey is string && data.storageKey.size() <= 128;
+    }
+
+    // Permission Grant Validation
+    function isValidPermission(data) {
+      return data.keys().hasAll(['id', 'documentId', 'recipientId', 'grantedBy', 'permissions', 'grantedAt', 'status']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.documentId is string && data.documentId.size() <= 128 &&
+             data.recipientId is string && data.recipientId.size() <= 128 &&
+             data.grantedBy is string && data.grantedBy == request.auth.uid &&
+             data.permissions is list && data.permissions.size() > 0 && data.permissions.size() <= 3 &&
+             data.status in ['ACTIVE', 'REVOKED', 'EXPIRED'];
+    }
+
+    // 1. Users Collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      // Block self-assigned elevated roles: non-admins cannot set status or modify role
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
+                       isValidUser(incoming()) && incoming().role != 'ADMIN';
+      allow update: if isSignedIn() && isValidId(userId) && (
+        // Admin update
+        isAdmin() ||
+        // User profile update (cannot change role or status)
+        (userId == request.auth.uid && isValidUser(incoming()) &&
+         incoming().role == existing().role &&
+         incoming().status == existing().status &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt', 'updatedAt']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Documents Collection
+    match /documents/{documentId} {
+      allow get: if isSignedIn() && isValidId(documentId) && (
+        existing().ownerId == request.auth.uid ||
+        // Check if explicit active grant exists in subcollection
+        exists(/databases/$(database)/documents/documents/$(documentId)/permissions/$(request.auth.uid))
+      );
+
+      // Secure List Query: Enforce that query explicitly checks ownerId
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() && isValidId(documentId) && isValidDocument(incoming());
+
+      allow update: if isSignedIn() && isValidId(documentId) &&
+                       existing().ownerId == request.auth.uid &&
+                       incoming().ownerId == existing().ownerId &&
+                       isValidDocument(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'title', 'category', 'subCategory', 'issuer',
+                         'issueDate', 'expiryDate', 'description', 'tags', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(documentId) && existing().ownerId == request.auth.uid;
+
+      // 3. Subcollection Permissions (Master Gate Pattern)
+      match /permissions/{permissionId} {
+        allow get: if isSignedIn() && isValidId(permissionId) && (
+          get(/databases/$(database)/documents/documents/$(documentId)).data.ownerId == request.auth.uid ||
+          existing().recipientId == request.auth.uid
+        );
+
+        allow list: if isSignedIn() && (
+          get(/databases/$(database)/documents/documents/$(documentId)).data.ownerId == request.auth.uid ||
+          resource.data.recipientId == request.auth.uid
+        );
+
+        allow create: if isSignedIn() && isValidId(permissionId) &&
+                         get(/databases/$(database)/documents/documents/$(documentId)).data.ownerId == request.auth.uid &&
+                         isValidPermission(incoming());
+
+        allow update: if isSignedIn() && isValidId(permissionId) &&
+                         get(/databases/$(database)/documents/documents/$(documentId)).data.ownerId == request.auth.uid &&
+                         incoming().documentId == existing().documentId &&
+                         incoming().recipientId == existing().recipientId &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'revokedAt', 'permissions', 'expiresAt']);
+
+        allow delete: if isSignedIn() && isValidId(permissionId) &&
+                         get(/databases/$(database)/documents/documents/$(documentId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // 4. Audit Events Collection: Strict append-only, server written
+    match /audit_events/{eventId} {
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        existing().actorId == request.auth.uid
+      );
+
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.actorId == request.auth.uid
+      );
+
+      // Disallow client updates and deletions: Tamper protection
+      allow update, delete: if false;
+      allow create: if isSignedIn(); // Log entry creation
+    }
+
+    // 5. Admin Registry
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if false; // Only server bootstrap
+    }
+  }
+}

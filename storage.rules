@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Vault Private Storage
+    match /vault/{userId}/{documentId}/{fileName} {
+      // Direct client download permitted only for owner
+      // Third-party viewers stream via server authorization endpoint
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      allow write: if request.auth != null &&
+                      request.auth.uid == userId &&
+                      request.resource.size < 10 * 1024 * 1024 &&
+                      (request.resource.contentType.matches('application/pdf') ||
+                       request.resource.contentType.matches('image/jpeg') ||
+                       request.resource.contentType.matches('image/png') ||
+                       request.resource.contentType.matches('image/svg\\+xml'));
+
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

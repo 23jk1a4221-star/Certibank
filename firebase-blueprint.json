@@ -1,0 +1,101 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered vault identity with role-based access control and account status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "username": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "format": "email", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["OWNER", "VIEWER", "ADMIN"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "username", "role", "status", "createdAt", "updatedAt"]
+    },
+    "Document": {
+      "title": "VaultDocument",
+      "description": "Cryptographically registered vault certificate with owner binding and metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "ownerUsername": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "normalizedTitle": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 64 },
+        "subCategory": { "type": "string", "maxLength": 100 },
+        "issuer": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "issueDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["VERIFIED_ISSUER", "PENDING_VERIFICATION", "SELF_ASSERTED", "REJECTED"] },
+        "storageKey": { "type": "string", "maxLength": 128 },
+        "mimeType": { "type": "string", "maxLength": 50 },
+        "fileSize": { "type": "number" },
+        "originalFileName": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "title", "category", "issuer", "storageKey", "createdAt", "updatedAt"]
+    },
+    "DocumentPermission": {
+      "title": "DocumentPermission",
+      "description": "Explicit per-document access grant with granular permission levels",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "documentId": { "type": "string", "maxLength": 128 },
+        "recipientId": { "type": "string", "maxLength": 128 },
+        "recipientUsername": { "type": "string", "maxLength": 64 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "permissions": { "type": "array" },
+        "grantedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "revokedAt": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ACTIVE", "REVOKED", "EXPIRED"] }
+      },
+      "required": ["id", "documentId", "recipientId", "grantedBy", "permissions", "grantedAt", "status"]
+    },
+    "AuditEvent": {
+      "title": "AuditEvent",
+      "description": "Server-authored append-only audit event with cryptographic hash chaining",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorUsername": { "type": "string", "maxLength": 64 },
+        "actorRole": { "type": "string" },
+        "action": { "type": "string", "maxLength": 64 },
+        "resourceId": { "type": "string", "maxLength": 128 },
+        "outcome": { "type": "string", "enum": ["SUCCESS", "DENIED", "FAILURE"] },
+        "reasonCode": { "type": "string", "maxLength": 64 },
+        "correlationId": { "type": "string", "maxLength": 128 },
+        "previousHash": { "type": "string", "maxLength": 64 },
+        "hash": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "timestamp", "actorId", "action", "outcome", "correlationId", "previousHash", "hash"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and trusted account status"
+    },
+    "/documents/{documentId}": {
+      "schema": "Document",
+      "description": "Protected certificate records owned by specific users"
+    },
+    "/documents/{documentId}/permissions/{permissionId}": {
+      "schema": "DocumentPermission",
+      "description": "Sub-collection permissions linked to the parent document"
+    },
+    "/audit_events/{eventId}": {
+      "schema": "AuditEvent",
+      "description": "Append-only tamper-evident audit ledger (server write only)"
+    }
+  }
+}

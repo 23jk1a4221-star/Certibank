@@ -1,0 +1,6 @@
+{
+  "name": "Certibank — A Trust Vault",
+  "description": "Enterprise-grade digital certificate vault with zero-trust document security, per-document permissions, voice-assisted login, and tamper-evident audit trail.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
